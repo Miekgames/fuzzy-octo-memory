@@ -5,13 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Restaurant Tycoon</title>
 <style>
-  body {
-    font-family: Arial, sans-serif;
-    background: #f7f7f7;
-    margin: 0;
-    padding: 20px;
-    color: #333;
-  }
+      body {
+        font-family: Arial, sans-serif;
+        background: #f7f7f7;
+        margin: 0;
+        padding: 20px;
+        color: #333;
+        /* Leave space for the collapsed sidebar */
+        margin-left: 60px;
+        transition: margin-left 0.3s ease;
+      }
   h1 {
     text-align: center;
     margin-bottom: 10px;
@@ -46,6 +49,40 @@
     background: #999;
     cursor: not-allowed;
   }
+
+      /* Sidebar styles */
+      #sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 60px;
+        background: #333;
+        color: white;
+        overflow-y: auto;
+        transition: width 0.3s ease;
+        z-index: 1000;
+        padding-top: 20px;
+      }
+      #sidebar:hover {
+        width: 250px;
+      }
+      #sidebar button {
+        display: block;
+        width: 90%;
+        margin: 5px auto;
+        padding: 10px;
+        font-size: 14px;
+        cursor: pointer;
+        border: none;
+        border-radius: 4px;
+        background: #4CAF50;
+        color: white;
+      }
+      #sidebar button:disabled {
+        background: #999;
+        cursor: not-allowed;
+      }
   #progressContainer {
     position: relative;
     width: 300px;
@@ -91,14 +128,19 @@
   <div>Stars: <span id="starDisplay">★☆☆☆☆</span></div>
   <div>Cooks: <span id="cooksDisplay">0</span></div>
   <div>Waiters: <span id="waitersDisplay">0</span></div>
+  <div>Managers: <span id="managersDisplay">0</span></div>
   <div>Ready Dishes: <span id="readyDishesDisplay">0</span></div>
   <div>Customers Waiting: <span id="customersDisplay">0</span></div>
 </div>
-<div class="buttons">
+<!-- Sidebar containing all action buttons; appears collapsed on the left -->
+<div id="sidebar">
   <button id="cookButton">Cook (Manual)</button>
   <button id="serveButton">Serve Dish (Manual)</button>
   <button id="hireCookButton">Hire Cook (Cost: <span id="hireCookCost"></span>)</button>
   <button id="hireWaiterButton">Hire Waiter (Cost: <span id="hireWaiterCost"></span>)</button>
+  <button id="hireManagerButton">Hire Manager (Cost: <span id="hireManagerCost"></span>)</button>
+  <button id="upgradeCookSpeedButton">Upgrade Cook Speed (Cost: <span id="cookSpeedUpgradeCost"></span>)</button>
+  <button id="upgradeWaiterSpeedButton">Upgrade Waiter Speed (Cost: <span id="waiterSpeedUpgradeCost"></span>)</button>
   <button id="upgradeStarButton">Upgrade Restaurant (Cost: <span id="starUpgradeCost"></span>)</button>
   <button id="rebirthButton">Rebirth (Cost: <span id="rebirthCost"></span>)</button>
 </div>
@@ -122,10 +164,16 @@
     stars: 1,
     cooks: 0,
     waiters: 0,
+    managers: 0,
     buffMultiplier: 1,
     rebirths: 0,
     readyDishes: {},
-    customers: []
+    customers: [],
+    // upgrade levels and multipliers for cook and waiter speed
+    cookSpeedLevel: 0,
+    waiterSpeedLevel: 0,
+    cookSpeedMultiplier: 1,
+    waiterSpeedMultiplier: 1
   };
   let nextCustomerId = 1;
 
@@ -134,9 +182,13 @@
   const starUpgradeCosts = {1: 100, 2: 250, 3: 1000, 4: 2500};
   const hireCookCostBase = 50;
   const hireWaiterCostBase = 50;
+  const hireManagerCostBase = 100;
   const rebirthCostBase = 10000;
   const moneyPerDishBase = 10;
   const autoCookTime = 10000;
+  // Base costs for upgrading cook and waiter speed. These will double with each upgrade.
+  const cookSpeedUpgradeBaseCost = 100;
+  const waiterSpeedUpgradeBaseCost = 100;
 
   let spawnTimerId = null;
   let deliverIntervalId = null;
@@ -166,6 +218,7 @@
         // Ensure new structures exist
         if (!Array.isArray(state.customers)) state.customers = [];
         if (typeof state.readyDishes !== 'object' || state.readyDishes === null) state.readyDishes = {};
+            if (typeof state.managers !== 'number') state.managers = 0;
       } catch(e) {
         console.error('Failed to parse save', e);
       }
@@ -176,6 +229,11 @@
         state.readyDishes[dish] = 0;
       }
     });
+    // Ensure new speed upgrade properties exist on older saves
+    if (typeof state.cookSpeedLevel !== 'number') state.cookSpeedLevel = 0;
+    if (typeof state.waiterSpeedLevel !== 'number') state.waiterSpeedLevel = 0;
+    if (typeof state.cookSpeedMultiplier !== 'number') state.cookSpeedMultiplier = 1;
+    if (typeof state.waiterSpeedMultiplier !== 'number') state.waiterSpeedMultiplier = 1;
   }
 
   function updateUI() {
@@ -187,6 +245,9 @@
     document.getElementById('starDisplay').textContent = starStr;
     document.getElementById('cooksDisplay').textContent = state.cooks;
     document.getElementById('waitersDisplay').textContent = state.waiters;
+    // display managers count
+    const managersEl = document.getElementById('managersDisplay');
+    if (managersEl) managersEl.textContent = state.managers;
     // total ready dishes
     const totalReady = Object.values(state.readyDishes).reduce((a,b) => a + b, 0);
     document.getElementById('readyDishesDisplay').textContent = totalReady;
@@ -194,11 +255,24 @@
     // costs
     document.getElementById('hireCookCost').textContent = Math.floor(hireCookCostBase * Math.pow(1.5, state.cooks));
     document.getElementById('hireWaiterCost').textContent = Math.floor(hireWaiterCostBase * Math.pow(1.5, state.waiters));
+    document.getElementById('hireManagerCost').textContent = Math.floor(hireManagerCostBase * Math.pow(1.5, state.managers));
     document.getElementById('starUpgradeCost').textContent = state.stars < 5 ? starUpgradeCosts[state.stars] : '-';
     document.getElementById('rebirthCost').textContent = state.stars >= 5 ? (rebirthCostBase * (state.rebirths + 1)) : '-';
+    // update costs for speed upgrades
+    document.getElementById('cookSpeedUpgradeCost').textContent =
+      Math.floor(cookSpeedUpgradeBaseCost * Math.pow(2, state.cookSpeedLevel));
+    document.getElementById('waiterSpeedUpgradeCost').textContent =
+      Math.floor(waiterSpeedUpgradeBaseCost * Math.pow(2, state.waiterSpeedLevel));
     // enable/disable buttons
     document.getElementById('upgradeStarButton').disabled = state.stars >= 5;
     document.getElementById('rebirthButton').disabled = state.stars < 5;
+    document.getElementById('upgradeCookSpeedButton').disabled =
+      state.money < Math.floor(cookSpeedUpgradeBaseCost * Math.pow(2, state.cookSpeedLevel));
+    document.getElementById('upgradeWaiterSpeedButton').disabled =
+      state.money < Math.floor(waiterSpeedUpgradeBaseCost * Math.pow(2, state.waiterSpeedLevel));
+    // disable manager hire button if not enough money
+    const managerBtn = document.getElementById('hireManagerButton');
+    if (managerBtn) managerBtn.disabled = state.money < Math.floor(hireManagerCostBase * Math.pow(1.5, state.managers));
     saveGame();
   }
 
@@ -227,9 +301,12 @@
   }
 
   function deliverDishes() {
-    if (state.waiters <= 0 || state.customers.length === 0) return;
+    // Combine waiters and managers when determining serving capacity
+    if ((state.waiters + state.managers) <= 0 || state.customers.length === 0) return;
     let deliveries = 0;
-    for (let i = 0; i < state.customers.length && deliveries < state.waiters; ) {
+    // Calculate maximum deliveries based on waiter and manager count and speed upgrades
+    const maxDeliveries = Math.floor((state.waiters + state.managers) * state.waiterSpeedMultiplier);
+    for (let i = 0; i < state.customers.length && deliveries < maxDeliveries; ) {
       const cust = state.customers[i];
       if (state.readyDishes[cust.order] && state.readyDishes[cust.order] > 0) {
         state.readyDishes[cust.order]--;
@@ -314,7 +391,7 @@
       state.readyDishes[dish] = (state.readyDishes[dish] || 0) + 1;
       log(`An auto-cook prepared a ${dish}.`);
       updateUI();
-    }, autoCookTime);
+    }, autoCookTime / state.cookSpeedMultiplier);
     cookIntervalIds.push(intervalId);
   }
 
@@ -327,6 +404,21 @@
       updateUI();
     } else {
       log('Not enough money to hire a waiter.');
+    }
+  }
+
+  // Hire a manager who acts as both a cook and a waiter
+  function hireManager() {
+    const cost = Math.floor(hireManagerCostBase * Math.pow(1.5, state.managers));
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.managers++;
+      // Start a new auto cook timer for the manager
+      startAutoCookTimer();
+      log('You hired a manager!');
+      updateUI();
+    } else {
+      log('Not enough money to hire a manager.');
     }
   }
 
@@ -360,6 +452,41 @@
     }
   }
 
+  // Upgrade the speed of cooks. Each upgrade increases speed by 20% and doubles the next upgrade cost.
+  function upgradeCookSpeed() {
+    const cost = Math.floor(cookSpeedUpgradeBaseCost * Math.pow(2, state.cookSpeedLevel));
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.cookSpeedLevel++;
+      state.cookSpeedMultiplier *= 1.2;
+      log('Cook speed upgraded!');
+      // Restart all auto cook timers with the new speed
+      cookIntervalIds.forEach(id => clearInterval(id));
+      cookIntervalIds = [];
+      for (let i = 0; i < state.cooks; i++) {
+        startAutoCookTimer();
+      }
+      updateUI();
+    } else {
+      log('Not enough money to upgrade cook speed.');
+    }
+  }
+
+  // Upgrade the speed of waiters. Each upgrade increases deliveries per interval by 20% and doubles the next upgrade cost.
+  function upgradeWaiterSpeed() {
+    const cost = Math.floor(waiterSpeedUpgradeBaseCost * Math.pow(2, state.waiterSpeedLevel));
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.waiterSpeedLevel++;
+      state.waiterSpeedMultiplier *= 1.2;
+      log('Waiter speed upgraded!');
+      updateUI();
+    } else {
+      log('Not enough money to upgrade waiter speed.');
+    }
+  }
+
+
   function init() {
     loadGame();
     // Attach event listeners
@@ -367,8 +494,11 @@
     document.getElementById('serveButton').addEventListener('click', manualServe);
     document.getElementById('hireCookButton').addEventListener('click', hireCook);
     document.getElementById('hireWaiterButton').addEventListener('click', hireWaiter);
+    document.getElementById('hireManagerButton').addEventListener('click', hireManager);
     document.getElementById('upgradeStarButton').addEventListener('click', upgradeStar);
     document.getElementById('rebirthButton').addEventListener('click', rebirth);
+    document.getElementById('upgradeCookSpeedButton').addEventListener('click', upgradeCookSpeed);
+    document.getElementById('upgradeWaiterSpeedButton').addEventListener('click', upgradeWaiterSpeed);
     // Populate dish dropdown
     const selectEl = document.getElementById('dishSelect');
     if (selectEl) {
@@ -386,6 +516,10 @@
     });
     // Start auto cook timers for existing cooks
     for (let i = 0; i < state.cooks; i++) {
+      startAutoCookTimer();
+    }
+    // Start auto cook timers for existing managers
+    for (let i = 0; i < state.managers; i++) {
       startAutoCookTimer();
     }
     scheduleNextSpawn();
