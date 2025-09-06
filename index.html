@@ -119,7 +119,8 @@
   const dishes = ['Burger', 'Pizza', 'Salad', 'Sushi', 'Pasta'];
   // Game state holds dynamic values for the simulation. readyDishes will map dish names to counts and customers is an array of customer objects.
   const state = {
-    money: 0,
+    // Start the player with some seed money
+    money: 100,
     stars: 1,
     cooks: 0,
     waiters: 0,
