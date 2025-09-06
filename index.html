@@ -96,6 +96,7 @@
 </div>
 <div class="buttons">
   <button id="cookButton">Cook (Manual)</button>
+  <button id="serveButton">Serve Dish (Manual)</button>
   <button id="hireCookButton">Hire Cook (Cost: <span id="hireCookCost"></span>)</button>
   <button id="hireWaiterButton">Hire Waiter (Cost: <span id="hireWaiterCost"></span>)</button>
   <button id="upgradeStarButton">Upgrade Restaurant (Cost: <span id="starUpgradeCost"></span>)</button>
@@ -105,21 +106,18 @@
   <div id="greenZone"></div>
   <div id="indicator"></div>
 </div>
-<div id="log"></div>
-<!-- Top-down view canvas for customers -->
-<canvas id="topdownCanvas" width="500" height="300" style="border:1px solid #333; display:block; margin:20px auto;"></canvas>
-<!-- Controls for selecting which dish to cook manually -->
+<!-- Dish selection for manual cooking -->
 <div id="orderControls" style="text-align:center; margin-top:10px;">
   <label for="dishSelect">Select dish:</label>
   <select id="dishSelect"></select>
 </div>
+<div id="log"></div>
 <script>
 (function() {
-  // Available dishes for orders and manual cooking. Feel free to expand this list for more variety.
+  // List of possible dishes
   const dishes = ['Burger', 'Pizza', 'Salad', 'Sushi', 'Pasta'];
-  // Game state holds dynamic values for the simulation. readyDishes will map dish names to counts and customers is an array of customer objects.
+  // Game state
   const state = {
-    // Start the player with some seed money
     money: 100,
     stars: 1,
     cooks: 0,
@@ -129,7 +127,6 @@
     readyDishes: {},
     customers: []
   };
-  // Counter for assigning unique IDs to customers
   let nextCustomerId = 1;
 
   // Config
@@ -139,7 +136,7 @@
   const hireWaiterCostBase = 50;
   const rebirthCostBase = 10000;
   const moneyPerDishBase = 10;
-  const autoCookTime = 10000; // milliseconds per dish per cook
+  const autoCookTime = 10000;
 
   let spawnTimerId = null;
   let deliverIntervalId = null;
@@ -147,18 +144,7 @@
   let manualProgress = 0;
   let cookIntervalIds = [];
 
-  // Player state for top-down view. The player can move around the restaurant and manually serve customers.
-  const player = {
-    x: 250,
-    y: 250,
-    radius: 15,
-    inventory: null,
-    speed: 3
-  };
-  // Track currently pressed keys for movement
-  const keysDown = {};
-
-  // Utility for logging
+  // Logging helper
   function log(msg) {
     const logDiv = document.getElementById('log');
     const p = document.createElement('div');
@@ -177,18 +163,14 @@
       try {
         const obj = JSON.parse(saved);
         Object.assign(state, obj);
-        // When loading older saves, ensure new structures exist
-        if (!Array.isArray(state.customers)) {
-          state.customers = [];
-        }
-        if (typeof state.readyDishes !== 'object' || state.readyDishes === null) {
-          state.readyDishes = {};
-        }
-      } catch (e) {
-        console.error('Failed to parse save:', e);
+        // Ensure new structures exist
+        if (!Array.isArray(state.customers)) state.customers = [];
+        if (typeof state.readyDishes !== 'object' || state.readyDishes === null) state.readyDishes = {};
+      } catch(e) {
+        console.error('Failed to parse save', e);
       }
     }
-    // Initialize ready dish counts for all known dishes if missing
+    // Ensure counts for each dish
     dishes.forEach(dish => {
       if (typeof state.readyDishes[dish] !== 'number') {
         state.readyDishes[dish] = 0;
@@ -198,7 +180,6 @@
 
   function updateUI() {
     document.getElementById('moneyDisplay').textContent = state.money.toFixed(2);
-    // update stars display with filled and empty stars
     let starStr = '';
     for (let i = 0; i < 5; i++) {
       starStr += i < state.stars ? '★' : '☆';
@@ -206,61 +187,19 @@
     document.getElementById('starDisplay').textContent = starStr;
     document.getElementById('cooksDisplay').textContent = state.cooks;
     document.getElementById('waitersDisplay').textContent = state.waiters;
-    // Display total number of prepared dishes by summing values in readyDishes
-    const totalReady = Object.values(state.readyDishes).reduce((a, b) => a + b, 0);
+    // total ready dishes
+    const totalReady = Object.values(state.readyDishes).reduce((a,b) => a + b, 0);
     document.getElementById('readyDishesDisplay').textContent = totalReady;
-    // Show the number of waiting customers
     document.getElementById('customersDisplay').textContent = state.customers.length;
-    // Costs
+    // costs
     document.getElementById('hireCookCost').textContent = Math.floor(hireCookCostBase * Math.pow(1.5, state.cooks));
     document.getElementById('hireWaiterCost').textContent = Math.floor(hireWaiterCostBase * Math.pow(1.5, state.waiters));
     document.getElementById('starUpgradeCost').textContent = state.stars < 5 ? starUpgradeCosts[state.stars] : '-';
     document.getElementById('rebirthCost').textContent = state.stars >= 5 ? (rebirthCostBase * (state.rebirths + 1)) : '-';
-    // Enable/disable buttons based on conditions
+    // enable/disable buttons
     document.getElementById('upgradeStarButton').disabled = state.stars >= 5;
     document.getElementById('rebirthButton').disabled = state.stars < 5;
     saveGame();
-  }
-
-  // Render a simple top-down view of the restaurant showing customers and their orders. Each customer is drawn as a circle with their order shown below.
-  function updateCanvas() {
-    const canvas = document.getElementById('topdownCanvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // draw background
-    ctx.fillStyle = '#e8e8e8';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const perRow = Math.floor(canvas.width / 70);
-    state.customers.forEach((cust, index) => {
-      const col = index % perRow;
-      const row = Math.floor(index / perRow);
-      const x = 40 + col * 70;
-      const y = 40 + row * 70;
-      // customer body
-      ctx.fillStyle = '#ffcc00';
-      ctx.beginPath();
-      ctx.arc(x, y, 20, 0, Math.PI * 2);
-      ctx.fill();
-      // order text below
-      ctx.fillStyle = '#333';
-      ctx.font = '12px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText(cust.order, x, y + 35);
-    });
-
-    // draw the player avatar
-    ctx.fillStyle = '#00aaff';
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-    ctx.fill();
-    // draw the player's held dish above the player if any
-    if (player.inventory) {
-      ctx.fillStyle = '#333';
-      ctx.font = '12px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText(player.inventory, player.x, player.y - player.radius - 10);
-    }
   }
 
   function scheduleNextSpawn() {
@@ -273,81 +212,11 @@
   }
 
   function spawnCustomer() {
-    // Assign a random dish to the new customer and add them to the queue
     const order = dishes[Math.floor(Math.random() * dishes.length)];
     const customer = { id: nextCustomerId++, order: order };
     state.customers.push(customer);
     log(`A customer has arrived wanting ${order}!`);
-    updateCanvas();
     updateUI();
-  }
-
-  // Update player position based on keys pressed and keep player within canvas bounds
-  function updatePlayer() {
-    const canvas = document.getElementById('topdownCanvas');
-    if (!canvas) return;
-    if (keysDown['ArrowLeft'] || keysDown['a']) player.x -= player.speed;
-    if (keysDown['ArrowRight'] || keysDown['d']) player.x += player.speed;
-    if (keysDown['ArrowUp'] || keysDown['w']) player.y -= player.speed;
-    if (keysDown['ArrowDown'] || keysDown['s']) player.y += player.speed;
-    // constrain to canvas bounds
-    player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-    player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
-  }
-
-  // Player picks up a ready dish into their inventory if available.
-  function pickUpDish() {
-    if (player.inventory) return;
-    // find first available dish
-    for (const dish of dishes) {
-      if (state.readyDishes[dish] && state.readyDishes[dish] > 0) {
-        state.readyDishes[dish]--;
-        player.inventory = dish;
-        log(`Picked up a ${dish}.`);
-        updateUI();
-        return;
-      }
-    }
-    log('No ready dishes to pick up.');
-  }
-
-  // Check for serving: if player touches a customer and is holding the matching dish, serve and earn money.
-  function checkServe() {
-    if (!player.inventory) return;
-    const canvas = document.getElementById('topdownCanvas');
-    if (!canvas) return;
-    const perRow = Math.floor(canvas.width / 70);
-    for (let i = 0; i < state.customers.length; i++) {
-      const cust = state.customers[i];
-      const col = i % perRow;
-      const row = Math.floor(i / perRow);
-      const cx = 40 + col * 70;
-      const cy = 40 + row * 70;
-      const dist = Math.hypot(player.x - cx, player.y - cy);
-      if (dist < player.radius + 20) {
-        // near a customer
-        if (cust.order === player.inventory) {
-          // serve
-          state.customers.splice(i, 1);
-          const earnings = moneyPerDishBase * state.stars * state.buffMultiplier;
-          state.money += earnings;
-          log(`You served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
-          player.inventory = null;
-          updateUI();
-          // update canvas positions after removal
-          updateCanvas();
-          return;
-        }
-      }
-    }
-  }
-
-  // Main game loop for movement and manual serving
-  function gameLoop() {
-    updatePlayer();
-    checkServe();
-    updateCanvas();
-    requestAnimationFrame(gameLoop);
   }
 
   function startDeliverInterval() {
@@ -358,10 +227,8 @@
   }
 
   function deliverDishes() {
-    // No deliveries if we have no waiters or no customers
     if (state.waiters <= 0 || state.customers.length === 0) return;
     let deliveries = 0;
-    // Attempt to serve customers whose order matches any ready dish
     for (let i = 0; i < state.customers.length && deliveries < state.waiters; ) {
       const cust = state.customers[i];
       if (state.readyDishes[cust.order] && state.readyDishes[cust.order] > 0) {
@@ -372,17 +239,16 @@
         log(`Served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
         deliveries++;
       } else {
-        i++; // look at next customer
+        i++;
       }
     }
     if (deliveries > 0) {
-      updateCanvas();
       updateUI();
     }
   }
 
   function startManualCooking() {
-    if (manualTimerId) return; // already cooking
+    if (manualTimerId) return;
     manualProgress = 0;
     const indicator = document.getElementById('indicator');
     indicator.style.width = '0%';
@@ -401,7 +267,6 @@
     document.getElementById('progressContainer').style.display = 'none';
     // success zone 40-60
     if (manualProgress >= 40 && manualProgress <= 60) {
-      // Use the selected dish from the dropdown when cooking manually
       const selectEl = document.getElementById('dishSelect');
       const dish = selectEl ? selectEl.value : dishes[0];
       state.readyDishes[dish] = (state.readyDishes[dish] || 0) + 1;
@@ -410,6 +275,24 @@
       log('Cooking failed... try again!');
     }
     updateUI();
+  }
+
+  function manualServe() {
+    if (state.customers.length === 0) {
+      log('No customers waiting.');
+      return;
+    }
+    const cust = state.customers[0];
+    if ((state.readyDishes[cust.order] || 0) > 0) {
+      state.readyDishes[cust.order]--;
+      state.customers.shift();
+      const earnings = moneyPerDishBase * state.stars * state.buffMultiplier;
+      state.money += earnings;
+      log(`You manually served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
+      updateUI();
+    } else {
+      log(`No ${cust.order} ready. Cook it first!`);
+    }
   }
 
   function hireCook() {
@@ -427,7 +310,6 @@
 
   function startAutoCookTimer() {
     const intervalId = setInterval(() => {
-      // Auto cooks randomly prepare one of the available dishes
       const dish = dishes[Math.floor(Math.random() * dishes.length)];
       state.readyDishes[dish] = (state.readyDishes[dish] || 0) + 1;
       log(`An auto-cook prepared a ${dish}.`);
@@ -480,13 +362,14 @@
 
   function init() {
     loadGame();
-    // attach event listeners
+    // Attach event listeners
     document.getElementById('cookButton').addEventListener('click', startManualCooking);
+    document.getElementById('serveButton').addEventListener('click', manualServe);
     document.getElementById('hireCookButton').addEventListener('click', hireCook);
     document.getElementById('hireWaiterButton').addEventListener('click', hireWaiter);
     document.getElementById('upgradeStarButton').addEventListener('click', upgradeStar);
     document.getElementById('rebirthButton').addEventListener('click', rebirth);
-    // Populate the dish selection dropdown with available dishes
+    // Populate dish dropdown
     const selectEl = document.getElementById('dishSelect');
     if (selectEl) {
       selectEl.innerHTML = '';
@@ -497,40 +380,17 @@
         selectEl.appendChild(option);
       });
     }
-    // Ensure ready dish counts exist for each dish type
+    // Ensure ready dish counts exist
     dishes.forEach(dish => {
-      if (typeof state.readyDishes[dish] !== 'number') {
-        state.readyDishes[dish] = 0;
-      }
+      if (typeof state.readyDishes[dish] !== 'number') state.readyDishes[dish] = 0;
     });
-    // start auto cook timers for existing cooks
+    // Start auto cook timers for existing cooks
     for (let i = 0; i < state.cooks; i++) {
       startAutoCookTimer();
     }
-    // start spawn and deliver
     scheduleNextSpawn();
     startDeliverInterval();
     updateUI();
-    updateCanvas();
-
-    // Initialize player position based on canvas size (center bottom)
-    const canvas = document.getElementById('topdownCanvas');
-    if (canvas) {
-      player.x = canvas.width / 2;
-      player.y = canvas.height - 30;
-    }
-    // keyboard events for player control and picking up dishes
-    window.addEventListener('keydown', function(e) {
-      keysDown[e.key] = true;
-      if (e.key === 'e' || e.key === 'E') {
-        pickUpDish();
-      }
-    });
-    window.addEventListener('keyup', function(e) {
-      delete keysDown[e.key];
-    });
-    // start the game loop
-    requestAnimationFrame(gameLoop);
   }
 
   window.addEventListener('load', init);
