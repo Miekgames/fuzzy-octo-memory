@@ -185,7 +185,8 @@
 <script>
 (function() {
   // List of possible dishes
-  const dishes = ['Burger', 'Pizza', 'Salad', 'Sushi', 'Pasta'];
+  // Expanded list of possible dishes. Adding more variety to the recipe shop.
+  const dishes = ['Burger', 'Pizza', 'Salad', 'Sushi', 'Pasta', 'Steak', 'Tacos', 'Soup', 'Ice Cream', 'Fries'];
   // Game state
   const state = {
     money: 100,
@@ -227,11 +228,32 @@
   const waiterSpeedUpgradeBaseCost = 100;
 
   // Costs for purchasing new recipes in the recipe shop. Only dishes not in availableDishes can be purchased.
+  // Costs for purchasing new recipes in the recipe shop. Only dishes not in availableDishes can be purchased.
+  // Additional dishes have been added (Steak, Tacos, Soup, Ice Cream, Fries) with associated costs.
   const recipeCosts = {
     'Pizza': 150,
     'Salad': 200,
     'Sushi': 250,
-    'Pasta': 300
+    'Pasta': 300,
+    'Steak': 400,
+    'Tacos': 350,
+    'Soup': 220,
+    'Ice Cream': 180,
+    'Fries': 160
+  };
+
+  // Define the rarity for each recipe. Rarities can be used to display information and for future balancing.
+  const recipeRarities = {
+    'Burger': 'Common',
+    'Pizza': 'Common',
+    'Salad': 'Common',
+    'Sushi': 'Rare',
+    'Pasta': 'Rare',
+    'Steak': 'Legendary',
+    'Tacos': 'Rare',
+    'Soup': 'Common',
+    'Ice Cream': 'Rare',
+    'Fries': 'Common'
   };
 
   // Large party configuration: chance of a large party spawn, size range, and pay multiplier.
@@ -518,8 +540,10 @@
         if (!state.availableDishes.includes(dish)) {
           hasLocked = true;
           const cost = recipeCosts[dish];
+          const rarity = recipeRarities[dish] || 'Common';
           const btn = document.createElement('button');
-          btn.textContent = `Buy ${dish} Recipe ($${cost})`;
+          // Display the rarity alongside the recipe name and cost.
+          btn.textContent = `Buy ${dish} Recipe (${rarity}) ($${cost})`;
           btn.disabled = state.money < cost;
           btn.addEventListener('click', () => buyRecipe(dish));
           shopDiv.appendChild(btn);
