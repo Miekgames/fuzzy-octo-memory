@@ -83,6 +83,27 @@
         background: #999;
         cursor: not-allowed;
       }
+
+      /* Manual actions area (cook, serve, boost) */
+      #manualActions {
+        display: flex;
+        justify-content: center;
+        margin-top: 10px;
+      }
+      #manualActions button {
+        margin: 0 5px;
+        padding: 10px 15px;
+        font-size: 16px;
+        cursor: pointer;
+        border: none;
+        border-radius: 4px;
+        background: #4CAF50;
+        color: white;
+      }
+      #manualActions button:disabled {
+        background: #999;
+        cursor: not-allowed;
+      }
   #progressContainer {
     position: relative;
     width: 300px;
@@ -134,8 +155,6 @@
 </div>
 <!-- Sidebar containing all action buttons; appears collapsed on the left -->
 <div id="sidebar">
-  <button id="cookButton">Cook (Manual)</button>
-  <button id="serveButton">Serve Dish (Manual)</button>
   <button id="hireCookButton">Hire Cook (Cost: <span id="hireCookCost"></span>)</button>
   <button id="hireWaiterButton">Hire Waiter (Cost: <span id="hireWaiterCost"></span>)</button>
   <button id="hireManagerButton">Hire Manager (Cost: <span id="hireManagerCost"></span>)</button>
@@ -152,6 +171,12 @@
 <div id="orderControls" style="text-align:center; margin-top:10px;">
   <label for="dishSelect">Select dish:</label>
   <select id="dishSelect"></select>
+</div>
+<!-- Manual action buttons: cook, serve, and boost. These are outside the sidebar -->
+<div id="manualActions">
+  <button id="cookButton">Cook (Manual)</button>
+  <button id="serveButton">Serve Dish (Manual)</button>
+  <button id="boostButton">Boost</button>
 </div>
 <div id="log"></div>
 <script>
@@ -175,6 +200,12 @@
     cookSpeedMultiplier: 1,
     waiterSpeedMultiplier: 1
   };
+
+  // Boost state to handle temporary speed increases
+  state.boostActive = false;
+  state.boostTimerId = null;
+  state.boostOriginalCookMultiplier = 1;
+  state.boostOriginalWaiterMultiplier = 1;
   let nextCustomerId = 1;
 
   // Config
@@ -189,6 +220,10 @@
   // Base costs for upgrading cook and waiter speed. These will double with each upgrade.
   const cookSpeedUpgradeBaseCost = 100;
   const waiterSpeedUpgradeBaseCost = 100;
+
+  // Boost configuration: multiplier and duration (ms)
+  const boostMultiplier = 2;
+  const boostDuration = 30000; // 30 seconds
 
   let spawnTimerId = null;
   let deliverIntervalId = null;
@@ -223,7 +258,12 @@
         console.error('Failed to parse save', e);
       }
     }
-    // Ensure counts for each dish
+        // Boost should not persist across reloads
+        state.boostActive = false;
+        state.boostTimerId = null;
+        state.boostOriginalCookMultiplier = state.cookSpeedMultiplier;
+        state.boostOriginalWaiterMultiplier = state.waiterSpeedMultiplier;
+        // Ensure counts for each dish
     dishes.forEach(dish => {
       if (typeof state.readyDishes[dish] !== 'number') {
         state.readyDishes[dish] = 0;
@@ -273,6 +313,12 @@
     // disable manager hire button if not enough money
     const managerBtn = document.getElementById('hireManagerButton');
     if (managerBtn) managerBtn.disabled = state.money < Math.floor(hireManagerCostBase * Math.pow(1.5, state.managers));
+
+    // enable boost button only if there is at least one manager and no active boost
+    const boostBtn = document.getElementById('boostButton');
+    if (boostBtn) {
+      boostBtn.disabled = (state.managers <= 0) || state.boostActive;
+    }
     saveGame();
   }
 
@@ -422,6 +468,47 @@
     }
   }
 
+  // Activate a temporary boost that speeds up both cooking and serving.
+  function activateBoost() {
+    // Only allow boost if at least one manager is present and boost is not already active
+    if (state.managers <= 0 || state.boostActive) {
+      log('Boost is unavailable. You need at least one manager and no active boost.');
+      return;
+    }
+    // Save original multipliers
+    state.boostOriginalCookMultiplier = state.cookSpeedMultiplier;
+    state.boostOriginalWaiterMultiplier = state.waiterSpeedMultiplier;
+    // Apply boost multiplier
+    state.cookSpeedMultiplier *= boostMultiplier;
+    state.waiterSpeedMultiplier *= boostMultiplier;
+    state.boostActive = true;
+    log('Boost activated! Cooks and waiters work faster.');
+    // Restart auto cook timers with boosted speed for cooks and managers
+    cookIntervalIds.forEach(id => clearInterval(id));
+    cookIntervalIds = [];
+    for (let i = 0; i < state.cooks + state.managers; i++) {
+      startAutoCookTimer();
+    }
+    updateUI();
+    // Clear any existing boost timeout
+    if (state.boostTimerId) clearTimeout(state.boostTimerId);
+    // Set timer to end boost after boostDuration
+    state.boostTimerId = setTimeout(() => {
+      // Restore original multipliers
+      state.cookSpeedMultiplier = state.boostOriginalCookMultiplier;
+      state.waiterSpeedMultiplier = state.boostOriginalWaiterMultiplier;
+      state.boostActive = false;
+      // Restart auto cook timers with normal speed
+      cookIntervalIds.forEach(id => clearInterval(id));
+      cookIntervalIds = [];
+      for (let i = 0; i < state.cooks + state.managers; i++) {
+        startAutoCookTimer();
+      }
+      log('Boost has ended.');
+      updateUI();
+    }, boostDuration);
+  }
+
   function upgradeStar() {
     if (state.stars >= 5) return;
     const cost = starUpgradeCosts[state.stars];
@@ -460,10 +547,10 @@
       state.cookSpeedLevel++;
       state.cookSpeedMultiplier *= 1.2;
       log('Cook speed upgraded!');
-      // Restart all auto cook timers with the new speed
+      // Restart all auto cook timers with the new speed (for cooks and managers)
       cookIntervalIds.forEach(id => clearInterval(id));
       cookIntervalIds = [];
-      for (let i = 0; i < state.cooks; i++) {
+      for (let i = 0; i < state.cooks + state.managers; i++) {
         startAutoCookTimer();
       }
       updateUI();
@@ -495,6 +582,7 @@
     document.getElementById('hireCookButton').addEventListener('click', hireCook);
     document.getElementById('hireWaiterButton').addEventListener('click', hireWaiter);
     document.getElementById('hireManagerButton').addEventListener('click', hireManager);
+    document.getElementById('boostButton').addEventListener('click', activateBoost);
     document.getElementById('upgradeStarButton').addEventListener('click', upgradeStar);
     document.getElementById('rebirthButton').addEventListener('click', rebirth);
     document.getElementById('upgradeCookSpeedButton').addEventListener('click', upgradeCookSpeed);
