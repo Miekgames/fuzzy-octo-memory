@@ -244,6 +244,72 @@
   const boostMultiplier = 2;
   const boostDuration = 30000; // 30 seconds
 
+  // Chaos event configuration
+  // Chance for a random event to occur after each customer spawn (0.1 = 10%)
+  const eventChance = 0.1;
+  // VIP party pay multiplier (applied on top of largePartyPayMultiplier if applicable)
+  const vipPayMultiplier = 5;
+
+  // Define a list of possible random events that can occur. Each event has a name and an effect function.
+  const events = [
+    {
+      name: 'Kitchen Fire',
+      effect: function() {
+        // Burn all ready dishes
+        Object.keys(state.readyDishes).forEach(dish => {
+          state.readyDishes[dish] = 0;
+        });
+        log('🔥 Kitchen fire! All prepared dishes have been burned.');
+        updateUI();
+      }
+    },
+    {
+      name: 'Health Inspection',
+      effect: function() {
+        // If stars are below 3, pay a fine; otherwise receive a reward
+        if (state.stars < 3) {
+          const fine = 50 * state.stars;
+          state.money = Math.max(0, state.money - fine);
+          log(`🚨 Health inspection failed! You were fined $${fine.toFixed(2)}.`);
+        } else {
+          const reward = 100 * state.stars;
+          state.money += reward;
+          log(`✅ Health inspection passed! You received a bonus of $${reward.toFixed(2)}.`);
+        }
+        updateUI();
+      }
+    },
+    {
+      name: 'VIP Party',
+      effect: function() {
+        // Spawn a special VIP large party with high pay multiplier
+        const size = 5 + Math.floor(Math.random() * 6); // between 5 and 10 guests
+        const dish = state.availableDishes[Math.floor(Math.random() * state.availableDishes.length)];
+        const customer = {
+          id: nextCustomerId++,
+          order: dish,
+          itemsNeeded: size,
+          itemsRemaining: size,
+          isLargeParty: true,
+          vip: true
+        };
+        state.customers.push(customer);
+        log(`🎉 A VIP party has arrived wanting ${dish} x${size}! They will pay generously.`);
+        updateUI();
+      }
+    }
+  ];
+
+  // Trigger a random chaos event based on eventChance. Only triggers if no other event mechanism is active.
+  function maybeTriggerEvent() {
+    if (Math.random() < eventChance) {
+      const event = events[Math.floor(Math.random() * events.length)];
+      // Log the event name for debugging if desired
+      log(`Random event triggered: ${event.name}.`);
+      event.effect();
+    }
+  }
+
   let spawnTimerId = null;
   let deliverIntervalId = null;
   let manualTimerId = null;
@@ -408,7 +474,11 @@
     const varianceFactor = 0.25 + Math.random() * 0.5;
     const interval = baseInterval * varianceFactor;
     spawnTimerId = setTimeout(() => {
+      // Spawn customers as usual
       spawnCustomer();
+      // After spawning, there is a chance to trigger a random chaos event
+      maybeTriggerEvent();
+      // Schedule the next spawn
       scheduleNextSpawn();
     }, interval);
   }
@@ -475,12 +545,21 @@
         if (cust.itemsRemaining <= 0) {
           // Calculate earnings: base * star * buff * number of dishes needed
           let earnings = moneyPerDishBase * state.stars * state.buffMultiplier * cust.itemsNeeded;
-          // Large parties pay an additional multiplier
+          // Apply large party multiplier if applicable
           if (cust.isLargeParty) {
             earnings *= largePartyPayMultiplier;
-            log(`Served a large party (${cust.order} x${cust.itemsNeeded}) and earned $${earnings.toFixed(2)}!`);
+          }
+          // Apply VIP pay multiplier if this is a VIP party
+          if (cust.vip) {
+            earnings *= vipPayMultiplier;
+          }
+          // Log appropriate message
+          if (cust.isLargeParty) {
+            const partyType = cust.vip ? 'VIP large party' : 'large party';
+            log(`Served a ${partyType} (${cust.order} x${cust.itemsNeeded}) and earned $${earnings.toFixed(2)}!`);
           } else {
-            log(`Served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
+            const customerType = cust.vip ? 'VIP customer' : 'customer';
+            log(`Served a ${customerType} (${cust.order}) and earned $${earnings.toFixed(2)}!`);
           }
           state.money += earnings;
           // remove the customer from queue
@@ -548,13 +627,23 @@
       cust.itemsRemaining--;
       // If all items have been served, remove customer and award earnings
       if (cust.itemsRemaining <= 0) {
-        // Compute earnings based on number of dishes needed, star rating, buff, and large party multiplier
+        // Compute earnings based on number of dishes needed, star rating, buff multiplier
         let earnings = moneyPerDishBase * state.stars * state.buffMultiplier * cust.itemsNeeded;
+        // Apply large party multiplier if applicable
         if (cust.isLargeParty) {
           earnings *= largePartyPayMultiplier;
-          log(`You manually served a large party (${cust.order} x${cust.itemsNeeded}) and earned $${earnings.toFixed(2)}!`);
+        }
+        // Apply VIP multiplier if applicable
+        if (cust.vip) {
+          earnings *= vipPayMultiplier;
+        }
+        // Log a message depending on customer type
+        if (cust.isLargeParty) {
+          const partyType = cust.vip ? 'VIP large party' : 'large party';
+          log(`You manually served a ${partyType} (${cust.order} x${cust.itemsNeeded}) and earned $${earnings.toFixed(2)}!`);
         } else {
-          log(`You manually served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
+          const customerType = cust.vip ? 'VIP customer' : 'customer';
+          log(`You manually served a ${customerType} (${cust.order}) and earned $${earnings.toFixed(2)}!`);
         }
         state.money += earnings;
         // Remove the customer from the queue
