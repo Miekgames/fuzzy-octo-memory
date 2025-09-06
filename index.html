@@ -250,6 +250,9 @@
   // VIP party pay multiplier (applied on top of largePartyPayMultiplier if applicable)
   const vipPayMultiplier = 5;
 
+  // Duration (in ms) for events that temporarily disable services
+  const powerOutageDuration = 15000; // 15 seconds
+
   // Define a list of possible random events that can occur. Each event has a name and an effect function.
   const events = [
     {
@@ -295,6 +298,75 @@
         };
         state.customers.push(customer);
         log(`🎉 A VIP party has arrived wanting ${dish} x${size}! They will pay generously.`);
+        updateUI();
+      }
+    },
+    {
+      name: 'Power Outage',
+      effect: function() {
+        // Temporarily halt cooking and serving
+        // Save current waiter speed
+        const savedWaiterMultiplier = state.waiterSpeedMultiplier;
+        // Set waiter speed to zero to pause serving
+        state.waiterSpeedMultiplier = 0;
+        // Stop all auto cook timers by clearing them
+        cookIntervalIds.forEach(id => clearInterval(id));
+        cookIntervalIds = [];
+        log('⚡ Power outage! All cooking and serving has been halted temporarily.');
+        // Restore normal operations after the outage duration
+        setTimeout(() => {
+          // Restore waiter speed
+          state.waiterSpeedMultiplier = savedWaiterMultiplier;
+          // Restart auto cook timers for all cooks and managers
+          for (let i = 0; i < state.cooks + state.managers; i++) {
+            startAutoCookTimer();
+          }
+          log('🔌 Power restored! Cooking and serving resumed.');
+          updateUI();
+        }, powerOutageDuration);
+      }
+    },
+    {
+      name: 'Rat Infestation',
+      effect: function() {
+        // A rat infestation either costs a star or imposes a fine
+        if (state.stars > 1) {
+          state.stars--;
+          log('🐀 Rat infestation! A star has been lost due to poor cleanliness.');
+        } else {
+          const penalty = 100;
+          state.money = Math.max(0, state.money - penalty);
+          log(`🐀 Rat infestation! You were fined $${penalty.toFixed(2)}.`);
+        }
+        updateUI();
+      }
+    },
+    {
+      name: 'Food Critic',
+      effect: function() {
+        // A food critic visit can either increase or decrease the star rating
+        // Success chance scales with current star rating
+        const successChance = state.stars / 5;
+        if (Math.random() < successChance) {
+          if (state.stars < 5) {
+            state.stars++;
+            log('👨‍🍳 A food critic loved your dishes! You gained a star.');
+          } else {
+            // Already at maximum stars; award bonus money instead
+            const reward = 200 * state.stars;
+            state.money += reward;
+            log(`👨‍🍳 A food critic tipped you $${reward.toFixed(2)} for your excellence.`);
+          }
+        } else {
+          if (state.stars > 1) {
+            state.stars--;
+            log('👨‍🍳 A food critic was disappointed. You lost a star.');
+          } else {
+            const penalty = 50;
+            state.money = Math.max(0, state.money - penalty);
+            log(`👨‍🍳 A food critic wrote a bad review. You paid $${penalty.toFixed(2)} to mitigate the damage.`);
+          }
+        }
         updateUI();
       }
     }
