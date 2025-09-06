@@ -390,7 +390,11 @@
 
   function scheduleNextSpawn() {
     if (spawnTimerId) clearTimeout(spawnTimerId);
-    const interval = spawnTimes[state.stars] || 30000;
+    // Determine the base spawn interval based on star rating
+    const baseInterval = spawnTimes[state.stars] || 30000;
+    // Introduce some randomness to the spawn timing (between 50% and 150% of the base interval)
+    const varianceFactor = 0.5 + Math.random();
+    const interval = baseInterval * varianceFactor;
     spawnTimerId = setTimeout(() => {
       spawnCustomer();
       scheduleNextSpawn();
@@ -398,11 +402,15 @@
   }
 
   function spawnCustomer() {
-    // Choose a random dish from the currently unlocked recipes
-    const order = state.availableDishes[Math.floor(Math.random() * state.availableDishes.length)];
-    const customer = { id: nextCustomerId++, order: order };
-    state.customers.push(customer);
-    log(`A customer has arrived wanting ${order}!`);
+    // Spawn a random number of customers (at least 1). The number scales with the current star rating.
+    const numCustomers = Math.floor(Math.random() * state.stars) + 1;
+    for (let i = 0; i < numCustomers; i++) {
+      // Choose a random dish from the currently unlocked recipes
+      const order = state.availableDishes[Math.floor(Math.random() * state.availableDishes.length)];
+      const customer = { id: nextCustomerId++, order: order };
+      state.customers.push(customer);
+      log(`A customer has arrived wanting ${order}!`);
+    }
     updateUI();
   }
 
