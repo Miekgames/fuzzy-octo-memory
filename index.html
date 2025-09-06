@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Restaurant Tycoon</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f7f7f7;
+    margin: 0;
+    padding: 20px;
+    color: #333;
+  }
+  h1 {
+    text-align: center;
+    margin-bottom: 10px;
+  }
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-around;
+    margin-bottom: 15px;
+    font-size: 18px;
+  }
+  .stats div {
+    margin: 5px 10px;
+  }
+  .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  .buttons button {
+    margin: 5px;
+    padding: 10px 15px;
+    font-size: 16px;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    background: #4CAF50;
+    color: white;
+  }
+  .buttons button:disabled {
+    background: #999;
+    cursor: not-allowed;
+  }
+  #progressContainer {
+    position: relative;
+    width: 300px;
+    height: 25px;
+    border: 1px solid #333;
+    margin: 20px auto;
+    display: none; /* hidden until manual cooking */
+    background: #ddd;
+  }
+  #greenZone {
+    position: absolute;
+    height: 100%;
+    background: #4CAF50;
+    left: 40%;
+    width: 20%;
+    top: 0;
+  }
+  #indicator {
+    position: absolute;
+    height: 100%;
+    background: #f44336;
+    left: 0;
+    width: 0%;
+    top: 0;
+    transition: width 0.03s linear;
+  }
+  #log {
+    max-width: 600px;
+    margin: 20px auto;
+    padding: 10px;
+    border: 1px solid #ccc;
+    background: #fafafa;
+    height: 100px;
+    overflow-y: auto;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<h1>Restaurant Tycoon 🍽️</h1>
+<div class="stats">
+  <div>Money: $<span id="moneyDisplay">0</span></div>
+  <div>Stars: <span id="starDisplay">★☆☆☆☆</span></div>
+  <div>Cooks: <span id="cooksDisplay">0</span></div>
+  <div>Waiters: <span id="waitersDisplay">0</span></div>
+  <div>Ready Dishes: <span id="readyDishesDisplay">0</span></div>
+  <div>Customers Waiting: <span id="customersDisplay">0</span></div>
+</div>
+<div class="buttons">
+  <button id="cookButton">Cook (Manual)</button>
+  <button id="hireCookButton">Hire Cook (Cost: <span id="hireCookCost"></span>)</button>
+  <button id="hireWaiterButton">Hire Waiter (Cost: <span id="hireWaiterCost"></span>)</button>
+  <button id="upgradeStarButton">Upgrade Restaurant (Cost: <span id="starUpgradeCost"></span>)</button>
+  <button id="rebirthButton">Rebirth (Cost: <span id="rebirthCost"></span>)</button>
+</div>
+<div id="progressContainer" onclick="manualClick()">
+  <div id="greenZone"></div>
+  <div id="indicator"></div>
+</div>
+<div id="log"></div>
+<script>
+(function() {
+  // Game state
+  const state = {
+    money: 0,
+    stars: 1,
+    cooks: 0,
+    waiters: 0,
+    buffMultiplier: 1,
+    rebirths: 0,
+    readyDishes: 0,
+    customers: 0
+  };
+
+  // Config
+  const spawnTimes = {1: 30000, 2: 25000, 3: 15000, 4: 10000, 5: 5000};
+  const starUpgradeCosts = {1: 100, 2: 250, 3: 1000, 4: 2500};
+  const hireCookCostBase = 50;
+  const hireWaiterCostBase = 50;
+  const rebirthCostBase = 10000;
+  const moneyPerDishBase = 10;
+  const autoCookTime = 10000; // milliseconds per dish per cook
+
+  let spawnTimerId = null;
+  let deliverIntervalId = null;
+  let manualTimerId = null;
+  let manualProgress = 0;
+  let cookIntervalIds = [];
+
+  // Utility for logging
+  function log(msg) {
+    const logDiv = document.getElementById('log');
+    const p = document.createElement('div');
+    p.textContent = msg;
+    logDiv.appendChild(p);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
+  function saveGame() {
+    localStorage.setItem('restaurantTycoonSave', JSON.stringify(state));
+  }
+
+  function loadGame() {
+    const saved = localStorage.getItem('restaurantTycoonSave');
+    if (saved) {
+      try {
+        const obj = JSON.parse(saved);
+        Object.assign(state, obj);
+      } catch (e) {
+        console.error('Failed to parse save:', e);
+      }
+    }
+  }
+
+  function updateUI() {
+    document.getElementById('moneyDisplay').textContent = state.money.toFixed(2);
+    // update stars display with filled and empty stars
+    let starStr = '';
+    for (let i = 0; i < 5; i++) {
+      starStr += i < state.stars ? '★' : '☆';
+    }
+    document.getElementById('starDisplay').textContent = starStr;
+    document.getElementById('cooksDisplay').textContent = state.cooks;
+    document.getElementById('waitersDisplay').textContent = state.waiters;
+    document.getElementById('readyDishesDisplay').textContent = state.readyDishes;
+    document.getElementById('customersDisplay').textContent = state.customers;
+    // Costs
+    document.getElementById('hireCookCost').textContent = Math.floor(hireCookCostBase * Math.pow(1.5, state.cooks));
+    document.getElementById('hireWaiterCost').textContent = Math.floor(hireWaiterCostBase * Math.pow(1.5, state.waiters));
+    document.getElementById('starUpgradeCost').textContent = state.stars < 5 ? starUpgradeCosts[state.stars] : '-';
+    document.getElementById('rebirthCost').textContent = state.stars >= 5 ? (rebirthCostBase * (state.rebirths + 1)) : '-';
+    // Enable/disable buttons based on conditions
+    document.getElementById('upgradeStarButton').disabled = state.stars >= 5;
+    document.getElementById('rebirthButton').disabled = state.stars < 5;
+    saveGame();
+  }
+
+  function scheduleNextSpawn() {
+    if (spawnTimerId) clearTimeout(spawnTimerId);
+    const interval = spawnTimes[state.stars] || 30000;
+    spawnTimerId = setTimeout(() => {
+      spawnCustomer();
+      scheduleNextSpawn();
+    }, interval);
+  }
+
+  function spawnCustomer() {
+    state.customers += 1;
+    log('A customer has arrived!');
+    updateUI();
+  }
+
+  function startDeliverInterval() {
+    if (deliverIntervalId) clearInterval(deliverIntervalId);
+    deliverIntervalId = setInterval(() => {
+      deliverDishes();
+    }, 1000);
+  }
+
+  function deliverDishes() {
+    if (state.waiters <= 0 || state.readyDishes <= 0 || state.customers <= 0) return;
+    // deliver up to number of waiters per second
+    const deliverCount = Math.min(state.waiters, state.readyDishes, state.customers);
+    for (let i = 0; i < deliverCount; i++) {
+      state.readyDishes--;
+      state.customers--;
+      const earnings = moneyPerDishBase * state.stars * state.buffMultiplier;
+      state.money += earnings;
+      log(`Delivered dish and earned $${earnings.toFixed(2)}!`);
+    }
+    updateUI();
+  }
+
+  function startManualCooking() {
+    if (manualTimerId) return; // already cooking
+    manualProgress = 0;
+    const indicator = document.getElementById('indicator');
+    indicator.style.width = '0%';
+    document.getElementById('progressContainer').style.display = 'block';
+    manualTimerId = setInterval(() => {
+      manualProgress += 2;
+      if (manualProgress > 100) manualProgress = 0;
+      indicator.style.width = manualProgress + '%';
+    }, 30);
+  }
+
+  window.manualClick = function() {
+    if (!manualTimerId) return;
+    clearInterval(manualTimerId);
+    manualTimerId = null;
+    document.getElementById('progressContainer').style.display = 'none';
+    // success zone 40-60
+    if (manualProgress >= 40 && manualProgress <= 60) {
+      state.readyDishes += 1;
+      log('You cooked a dish!');
+    } else {
+      log('Cooking failed... try again!');
+    }
+    updateUI();
+  }
+
+  function hireCook() {
+    const cost = Math.floor(hireCookCostBase * Math.pow(1.5, state.cooks));
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.cooks++;
+      startAutoCookTimer();
+      log('You hired a cook!');
+      updateUI();
+    } else {
+      log('Not enough money to hire a cook.');
+    }
+  }
+
+  function startAutoCookTimer() {
+    const intervalId = setInterval(() => {
+      state.readyDishes += 1;
+      log('An auto-cook prepared a dish.');
+      updateUI();
+    }, autoCookTime);
+    cookIntervalIds.push(intervalId);
+  }
+
+  function hireWaiter() {
+    const cost = Math.floor(hireWaiterCostBase * Math.pow(1.5, state.waiters));
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.waiters++;
+      log('You hired a waiter!');
+      updateUI();
+    } else {
+      log('Not enough money to hire a waiter.');
+    }
+  }
+
+  function upgradeStar() {
+    if (state.stars >= 5) return;
+    const cost = starUpgradeCosts[state.stars];
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.stars++;
+      log(`Upgraded to ${state.stars} star${state.stars > 1 ? 's' : ''}!`);
+      scheduleNextSpawn();
+      updateUI();
+    } else {
+      log('Not enough money to upgrade.');
+    }
+  }
+
+  function rebirth() {
+    if (state.stars < 5) return;
+    const cost = rebirthCostBase * (state.rebirths + 1);
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.rebirths++;
+      state.buffMultiplier *= 1.5;
+      state.stars = 1;
+      log(`Rebirthed! Permanent buff increased. Total rebirths: ${state.rebirths}.`);
+      scheduleNextSpawn();
+      updateUI();
+    } else {
+      log('Not enough money to rebirth.');
+    }
+  }
+
+  function init() {
+    loadGame();
+    // attach event listeners
+    document.getElementById('cookButton').addEventListener('click', startManualCooking);
+    document.getElementById('hireCookButton').addEventListener('click', hireCook);
+    document.getElementById('hireWaiterButton').addEventListener('click', hireWaiter);
+    document.getElementById('upgradeStarButton').addEventListener('click', upgradeStar);
+    document.getElementById('rebirthButton').addEventListener('click', rebirth);
+    // start auto cook timers for existing cooks
+    for (let i = 0; i < state.cooks; i++) {
+      startAutoCookTimer();
+    }
+    // start spawn and deliver
+    scheduleNextSpawn();
+    startDeliverInterval();
+    updateUI();
+  }
+
+  window.addEventListener('load', init);
+})();
+</script>
+</body>
+</html>
