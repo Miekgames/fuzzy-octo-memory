@@ -162,6 +162,8 @@
   <button id="upgradeWaiterSpeedButton">Upgrade Waiter Speed (Cost: <span id="waiterSpeedUpgradeCost"></span>)</button>
   <button id="upgradeStarButton">Upgrade Restaurant (Cost: <span id="starUpgradeCost"></span>)</button>
   <button id="rebirthButton">Rebirth (Cost: <span id="rebirthCost"></span>)</button>
+  <!-- Recipe shop container: dynamic buttons for purchasing new recipes will be injected here -->
+  <div id="recipeShop"></div>
 </div>
 <div id="progressContainer" onclick="manualClick()">
   <div id="greenZone"></div>
@@ -198,7 +200,9 @@
     cookSpeedLevel: 0,
     waiterSpeedLevel: 0,
     cookSpeedMultiplier: 1,
-    waiterSpeedMultiplier: 1
+    waiterSpeedMultiplier: 1,
+    // list of dishes currently unlocked and available to cook and serve
+    availableDishes: ['Burger']
   };
 
   // Boost state to handle temporary speed increases
@@ -220,6 +224,14 @@
   // Base costs for upgrading cook and waiter speed. These will double with each upgrade.
   const cookSpeedUpgradeBaseCost = 100;
   const waiterSpeedUpgradeBaseCost = 100;
+
+  // Costs for purchasing new recipes in the recipe shop. Only dishes not in availableDishes can be purchased.
+  const recipeCosts = {
+    'Pizza': 150,
+    'Salad': 200,
+    'Sushi': 250,
+    'Pasta': 300
+  };
 
   // Boost configuration: multiplier and duration (ms)
   const boostMultiplier = 2;
@@ -254,6 +266,11 @@
         if (!Array.isArray(state.customers)) state.customers = [];
         if (typeof state.readyDishes !== 'object' || state.readyDishes === null) state.readyDishes = {};
             if (typeof state.managers !== 'number') state.managers = 0;
+        // Ensure available dishes array exists; default to initial dish if not present
+        if (!Array.isArray(state.availableDishes) || state.availableDishes.length === 0) {
+          // Use the first dish from the full dish list as the default
+          state.availableDishes = [dishes[0]];
+        }
       } catch(e) {
         console.error('Failed to parse save', e);
       }
@@ -264,6 +281,7 @@
         state.boostOriginalCookMultiplier = state.cookSpeedMultiplier;
         state.boostOriginalWaiterMultiplier = state.waiterSpeedMultiplier;
         // Ensure counts for each dish
+    // Ensure ready dish counts exist for all possible dishes
     dishes.forEach(dish => {
       if (typeof state.readyDishes[dish] !== 'number') {
         state.readyDishes[dish] = 0;
@@ -319,6 +337,54 @@
     if (boostBtn) {
       boostBtn.disabled = (state.managers <= 0) || state.boostActive;
     }
+
+    // Populate the manual dish selection dropdown with currently available dishes
+    const selectEl = document.getElementById('dishSelect');
+    if (selectEl) {
+      const prevValue = selectEl.value;
+      selectEl.innerHTML = '';
+      state.availableDishes.forEach(d => {
+        const option = document.createElement('option');
+        option.value = d;
+        option.textContent = d;
+        selectEl.appendChild(option);
+      });
+      // Preserve previous selection if still available
+      if (prevValue && state.availableDishes.includes(prevValue)) {
+        selectEl.value = prevValue;
+      }
+    }
+
+    // Build the recipe shop with purchase buttons for locked recipes
+    const shopDiv = document.getElementById('recipeShop');
+    if (shopDiv) {
+      shopDiv.innerHTML = '';
+      // Add a header for the recipe shop
+      const header = document.createElement('div');
+      header.style.margin = '5px 10px';
+      header.style.fontWeight = 'bold';
+      header.textContent = 'Recipe Shop';
+      shopDiv.appendChild(header);
+      let hasLocked = false;
+      dishes.forEach(dish => {
+        if (!state.availableDishes.includes(dish)) {
+          hasLocked = true;
+          const cost = recipeCosts[dish];
+          const btn = document.createElement('button');
+          btn.textContent = `Buy ${dish} Recipe ($${cost})`;
+          btn.disabled = state.money < cost;
+          btn.addEventListener('click', () => buyRecipe(dish));
+          shopDiv.appendChild(btn);
+        }
+      });
+      if (!hasLocked) {
+        const msg = document.createElement('div');
+        msg.style.margin = '5px 10px';
+        msg.textContent = 'All recipes unlocked!';
+        shopDiv.appendChild(msg);
+      }
+    }
+
     saveGame();
   }
 
@@ -332,7 +398,8 @@
   }
 
   function spawnCustomer() {
-    const order = dishes[Math.floor(Math.random() * dishes.length)];
+    // Choose a random dish from the currently unlocked recipes
+    const order = state.availableDishes[Math.floor(Math.random() * state.availableDishes.length)];
     const customer = { id: nextCustomerId++, order: order };
     state.customers.push(customer);
     log(`A customer has arrived wanting ${order}!`);
@@ -433,7 +500,8 @@
 
   function startAutoCookTimer() {
     const intervalId = setInterval(() => {
-      const dish = dishes[Math.floor(Math.random() * dishes.length)];
+      // Auto cooks prepare random dishes from unlocked recipes
+      const dish = state.availableDishes[Math.floor(Math.random() * state.availableDishes.length)];
       state.readyDishes[dish] = (state.readyDishes[dish] || 0) + 1;
       log(`An auto-cook prepared a ${dish}.`);
       updateUI();
@@ -573,6 +641,29 @@
     }
   }
 
+  // Purchase a new recipe from the recipe shop. Unlocks the dish and deducts money.
+  function buyRecipe(dish) {
+    // If the dish is already available, do nothing
+    if (state.availableDishes.includes(dish)) return;
+    const cost = recipeCosts[dish];
+    if (typeof cost !== 'number') {
+      log(`Unknown cost for recipe ${dish}.`);
+      return;
+    }
+    if (state.money >= cost) {
+      state.money -= cost;
+      state.availableDishes.push(dish);
+      // Ensure ready dish count exists for the newly unlocked recipe
+      if (typeof state.readyDishes[dish] !== 'number') {
+        state.readyDishes[dish] = 0;
+      }
+      log(`You purchased the ${dish} recipe! Customers may now order it.`);
+      updateUI();
+    } else {
+      log('Not enough money to buy that recipe.');
+    }
+  }
+
 
   function init() {
     loadGame();
@@ -587,11 +678,11 @@
     document.getElementById('rebirthButton').addEventListener('click', rebirth);
     document.getElementById('upgradeCookSpeedButton').addEventListener('click', upgradeCookSpeed);
     document.getElementById('upgradeWaiterSpeedButton').addEventListener('click', upgradeWaiterSpeed);
-    // Populate dish dropdown
+    // Populate dish dropdown with currently available dishes
     const selectEl = document.getElementById('dishSelect');
     if (selectEl) {
       selectEl.innerHTML = '';
-      dishes.forEach(dish => {
+      state.availableDishes.forEach(dish => {
         const option = document.createElement('option');
         option.value = dish;
         option.textContent = dish;
