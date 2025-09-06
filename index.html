@@ -152,6 +152,7 @@
   <div>Managers: <span id="managersDisplay">0</span></div>
   <div>Ready Dishes: <span id="readyDishesDisplay">0</span></div>
   <div>Customers Waiting: <span id="customersDisplay">0</span></div>
+  <div>Rebirths: <span id="rebirthsDisplay">0</span></div>
 </div>
 <!-- Sidebar containing all action buttons; appears collapsed on the left -->
 <div id="sidebar">
@@ -233,6 +234,12 @@
     'Pasta': 300
   };
 
+  // Large party configuration: chance of a large party spawn, size range, and pay multiplier.
+  const largePartyChance = 0.2; // 20% chance a spawned customer is a large party
+  const largePartyMinSize = 3;
+  const largePartyMaxSize = 5;
+  const largePartyPayMultiplier = 2; // large parties pay twice per dish compared to normal customers
+
   // Boost configuration: multiplier and duration (ms)
   const boostMultiplier = 2;
   const boostDuration = 30000; // 30 seconds
@@ -310,6 +317,9 @@
     const totalReady = Object.values(state.readyDishes).reduce((a,b) => a + b, 0);
     document.getElementById('readyDishesDisplay').textContent = totalReady;
     document.getElementById('customersDisplay').textContent = state.customers.length;
+    // display number of rebirths
+    const rebirthsEl = document.getElementById('rebirthsDisplay');
+    if (rebirthsEl) rebirthsEl.textContent = state.rebirths;
     // costs
     document.getElementById('hireCookCost').textContent = Math.floor(hireCookCostBase * Math.pow(1.5, state.cooks));
     document.getElementById('hireWaiterCost').textContent = Math.floor(hireWaiterCostBase * Math.pow(1.5, state.waiters));
@@ -390,10 +400,12 @@
 
   function scheduleNextSpawn() {
     if (spawnTimerId) clearTimeout(spawnTimerId);
-    // Determine the base spawn interval based on star rating
-    const baseInterval = spawnTimes[state.stars] || 30000;
-    // Introduce some randomness to the spawn timing (between 50% and 150% of the base interval)
-    const varianceFactor = 0.5 + Math.random();
+    // Determine the base spawn interval based on star rating, reduced by rebirths (each rebirth speeds up spawns by 10%)
+    const baseIntervalRaw = spawnTimes[state.stars] || 30000;
+    const rebirthFactor = Math.pow(0.9, state.rebirths);
+    const baseInterval = baseIntervalRaw * rebirthFactor;
+    // Introduce some randomness to the spawn timing (between 25% and 75% of the base interval)
+    const varianceFactor = 0.25 + Math.random() * 0.5;
     const interval = baseInterval * varianceFactor;
     spawnTimerId = setTimeout(() => {
       spawnCustomer();
@@ -402,14 +414,38 @@
   }
 
   function spawnCustomer() {
-    // Spawn a random number of customers (at least 1). The number scales with the current star rating.
-    const numCustomers = Math.floor(Math.random() * state.stars) + 1;
+    // Spawn a number of customers scaling with the current star rating (ensuring plenty of customers).
+    // For example, when at 1 star, spawns 1 customer; at 5 stars spawns between 5 and 9 customers.
+    const numCustomers = state.stars + Math.floor(Math.random() * state.stars);
     for (let i = 0; i < numCustomers; i++) {
+      // Determine if this is a large party based on configured chance
+      const isLarge = Math.random() < largePartyChance;
       // Choose a random dish from the currently unlocked recipes
       const order = state.availableDishes[Math.floor(Math.random() * state.availableDishes.length)];
-      const customer = { id: nextCustomerId++, order: order };
-      state.customers.push(customer);
-      log(`A customer has arrived wanting ${order}!`);
+      if (isLarge) {
+        // Determine party size within configured range
+        const sizeRange = largePartyMaxSize - largePartyMinSize + 1;
+        const partySize = largePartyMinSize + Math.floor(Math.random() * sizeRange);
+        const customer = {
+          id: nextCustomerId++,
+          order: order,
+          itemsNeeded: partySize,
+          itemsRemaining: partySize,
+          isLargeParty: true
+        };
+        state.customers.push(customer);
+        log(`A large party has arrived wanting ${order} x${partySize}!`);
+      } else {
+        const customer = {
+          id: nextCustomerId++,
+          order: order,
+          itemsNeeded: 1,
+          itemsRemaining: 1,
+          isLargeParty: false
+        };
+        state.customers.push(customer);
+        log(`A customer has arrived wanting ${order}!`);
+      }
     }
     updateUI();
   }
@@ -429,14 +465,36 @@
     const maxDeliveries = Math.floor((state.waiters + state.managers) * state.waiterSpeedMultiplier);
     for (let i = 0; i < state.customers.length && deliveries < maxDeliveries; ) {
       const cust = state.customers[i];
+      // Only serve if we have the desired dish ready
       if (state.readyDishes[cust.order] && state.readyDishes[cust.order] > 0) {
+        // consume one dish
         state.readyDishes[cust.order]--;
-        state.customers.splice(i, 1);
-        const earnings = moneyPerDishBase * state.stars * state.buffMultiplier;
-        state.money += earnings;
-        log(`Served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
+        cust.itemsRemaining--;
         deliveries++;
+        // If this completes the order for this customer/party
+        if (cust.itemsRemaining <= 0) {
+          // Calculate earnings: base * star * buff * number of dishes needed
+          let earnings = moneyPerDishBase * state.stars * state.buffMultiplier * cust.itemsNeeded;
+          // Large parties pay an additional multiplier
+          if (cust.isLargeParty) {
+            earnings *= largePartyPayMultiplier;
+            log(`Served a large party (${cust.order} x${cust.itemsNeeded}) and earned $${earnings.toFixed(2)}!`);
+          } else {
+            log(`Served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
+          }
+          state.money += earnings;
+          // remove the customer from queue
+          state.customers.splice(i, 1);
+        } else {
+          // Still more items to serve for this party; log partial if desired
+          if (cust.isLargeParty) {
+            const servedCount = cust.itemsNeeded - cust.itemsRemaining;
+            log(`Served part of a large party (${cust.order}) - ${servedCount}/${cust.itemsNeeded} complete.`);
+          }
+          // stay on same index to serve again on next iteration
+        }
       } else {
+        // move to next customer if cannot serve this one due to lack of dish
         i++;
       }
     }
@@ -476,17 +534,39 @@
   }
 
   function manualServe() {
+    // Serve the first customer in line. This now supports large parties with multiple items.
     if (state.customers.length === 0) {
       log('No customers waiting.');
       return;
     }
     const cust = state.customers[0];
+    // Only serve if we have the requested dish ready
     if ((state.readyDishes[cust.order] || 0) > 0) {
+      // Consume one dish from the ready stack
       state.readyDishes[cust.order]--;
-      state.customers.shift();
-      const earnings = moneyPerDishBase * state.stars * state.buffMultiplier;
-      state.money += earnings;
-      log(`You manually served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
+      // Reduce items remaining for this customer/party
+      cust.itemsRemaining--;
+      // If all items have been served, remove customer and award earnings
+      if (cust.itemsRemaining <= 0) {
+        // Compute earnings based on number of dishes needed, star rating, buff, and large party multiplier
+        let earnings = moneyPerDishBase * state.stars * state.buffMultiplier * cust.itemsNeeded;
+        if (cust.isLargeParty) {
+          earnings *= largePartyPayMultiplier;
+          log(`You manually served a large party (${cust.order} x${cust.itemsNeeded}) and earned $${earnings.toFixed(2)}!`);
+        } else {
+          log(`You manually served a ${cust.order} and earned $${earnings.toFixed(2)}!`);
+        }
+        state.money += earnings;
+        // Remove the customer from the queue
+        state.customers.shift();
+      } else {
+        // For large parties not yet finished, log progress
+        if (cust.isLargeParty) {
+          const servedCount = cust.itemsNeeded - cust.itemsRemaining;
+          log(`You served part of a large party (${cust.order}) - ${servedCount}/${cust.itemsNeeded} complete.`);
+        }
+        // Do not remove the customer; they will remain until order is fulfilled
+      }
       updateUI();
     } else {
       log(`No ${cust.order} ready. Cook it first!`);
